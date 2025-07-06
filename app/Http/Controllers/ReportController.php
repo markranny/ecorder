@@ -745,87 +745,86 @@ public function mgcount()
     }
 
     public function resetorder(Request $request)
-{
-    try {
-        if ($request->passcode !== '0123456789') {
+    {
+        try {
+            if ($request->passcode !== '0123456789') {
+                return back()
+                    ->with('message', 'Wrong Passcode')
+                    ->with('isError', true);
+            }
+
+            $journalId = $request->tr;
+
+            $resetDateStr = DB::table('inventjournaltables as a')
+                ->leftJoin('rbostoretables as b', 'a.STOREID', '=', 'b.name')
+                ->where('a.journalid', $journalId)
+                ->value('a.createddatetime');
+            
+            // Convert string to Carbon instance
+            $resetDate = \Carbon\Carbon::parse($resetDateStr);
+            $dateString = $resetDate->toDateString();
+            $dateFormat = $resetDate->format('Ymd');
+            
+            DB::beginTransaction();
+            
+            $storeid = DB::table('inventjournaltransrepos as a')
+                ->leftJoin('rbostoretables as b', 'a.STORENAME', '=', 'b.name')
+                ->where('a.journalid', $journalId)
+                ->value('b.STOREID');
+                
+            if (!$storeid) {
+                return back()
+                    ->with('message', 'Store ID not found')
+                    ->with('isError', true);
+            }
+            
+            DB::table('inventjournaltrans')
+                ->where('journalid', $journalId)
+                ->delete();
+                
+            DB::table('inventjournaltables')
+                ->where('journalid', $journalId)
+                ->update(['posted' => '0', 'sent' => '0']);
+                
+            DB::table('inventjournaltransrepos')
+                ->where('journalid', $journalId)
+                ->update(['status' => '0']);
+                
+            $dynamicDisk = "public/{$dateFormat}";
+            
+            if (!Storage::exists($dynamicDisk)) {
+                Log::warning("Directory {$dynamicDisk} does not exist, but continuing with reset process");
+            } else {
+                $filename = $storeid . $dateFormat;
+                if (Storage::disk('public')->exists("{$dateFormat}/{$filename}.txt")) {
+                    Storage::disk('public')->delete("{$dateFormat}/{$filename}.txt");
+                }
+                
+                if (Storage::disk('public')->exists("SR/{$dateFormat}/{$filename}.txt")) {
+                    Storage::disk('public')->delete("SR/{$dateFormat}/{$filename}.txt");
+                }
+                
+                if (Storage::disk('public')->exists("SO/{$dateFormat}/{$filename}.txt")) {
+                    Storage::disk('public')->delete("SO/{$dateFormat}/{$filename}.txt");
+                }
+            }
+            
+            DB::commit();
+            
+            $dateDisplay = $resetDate->format('Y-m-d');
             return back()
-                ->with('message', 'Wrong Passcode')
+                ->with('message', "Reset Order Successfully for date: {$dateDisplay}")
+                ->with('isSuccess', true);
+                
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            return back()
+                ->withInput()
+                ->with('message', 'Error: ' . $e->getMessage())
                 ->with('isError', true);
         }
-
-        $journalId = $request->tr;
-
-        $resetDateStr = DB::table('inventjournaltables as a')
-            ->leftJoin('rbostoretables as b', 'a.STOREID', '=', 'b.name')
-            ->where('a.journalid', $journalId)
-            ->value('a.createddatetime');
-        
-        // Convert string to Carbon instance
-        $resetDate = \Carbon\Carbon::parse($resetDateStr);
-        $dateString = $resetDate->toDateString();
-        $dateFormat = $resetDate->format('Ymd');
-        
-        DB::beginTransaction();
-        
-        $storeid = DB::table('inventjournaltransrepos as a')
-            ->leftJoin('rbostoretables as b', 'a.STORENAME', '=', 'b.name')
-            ->where('a.journalid', $journalId)
-            ->value('b.STOREID');
-            
-        if (!$storeid) {
-            return back()
-                ->with('message', 'Store ID not found')
-                ->with('isError', true);
-        }
-        
-        DB::table('inventjournaltrans')
-            ->where('journalid', $journalId)
-            ->whereDate('posteddatetime', $dateString)
-            ->delete();
-            
-        DB::table('inventjournaltables')
-            ->where('journalid', $journalId)
-            ->update(['posted' => '0', 'sent' => '0']);
-            
-        DB::table('inventjournaltransrepos')
-            ->where('journalid', $journalId)
-            ->update(['status' => '0']);
-            
-        $dynamicDisk = "public/{$dateFormat}";
-        
-        if (!Storage::exists($dynamicDisk)) {
-            Log::warning("Directory {$dynamicDisk} does not exist, but continuing with reset process");
-        } else {
-            $filename = $storeid . $dateFormat;
-            if (Storage::disk('public')->exists("{$dateFormat}/{$filename}.txt")) {
-                Storage::disk('public')->delete("{$dateFormat}/{$filename}.txt");
-            }
-            
-            if (Storage::disk('public')->exists("SR/{$dateFormat}/{$filename}.txt")) {
-                Storage::disk('public')->delete("SR/{$dateFormat}/{$filename}.txt");
-            }
-            
-            if (Storage::disk('public')->exists("SO/{$dateFormat}/{$filename}.txt")) {
-                Storage::disk('public')->delete("SO/{$dateFormat}/{$filename}.txt");
-            }
-        }
-        
-        DB::commit();
-        
-        $dateDisplay = $resetDate->format('Y-m-d');
-        return back()
-            ->with('message', "Reset Order Successfully for date: {$dateDisplay}")
-            ->with('isSuccess', true);
-            
-    } catch (\Exception $e) {
-        DB::rollBack();
-        
-        return back()
-            ->withInput()
-            ->with('message', 'Error: ' . $e->getMessage())
-            ->with('isError', true);
     }
-}
 
 public function getTxtFiles($date)
 {

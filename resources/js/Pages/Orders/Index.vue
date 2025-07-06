@@ -235,112 +235,120 @@ const postAndSend = async (journalId) => {
     
     console.log('Processing order for journal ID:', journalIdString);
     
-    // Find the order in the props data to get its date
-    const orderRecord = props.inventjournaltables.find(order => order.journalid === journalId);
-    const orderDate = orderRecord?.createddatetime ? new Date(orderRecord.createddatetime).toLocaleDateString() : new Date().toLocaleDateString();
+    // CRITICAL FIX: Create a unique key for this specific journal to prevent duplicate processing
+    const processingKey = `posting_${journalIdString}`;
     
-    // Show loading SweetAlert
-    Swal.fire({
-      title: 'Processing Order',
-      text: 'Please wait while your order is being processed...',
-      icon: 'info',
-      allowOutsideClick: false,
-      showConfirmButton: false,
-      didOpen: () => {
-        Swal.showLoading();
-      }
-    });
-    
-    // Get CSRF token from meta tag
-    const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-    if (!csrfToken) {
-      console.error('CSRF token not found in page');
-      throw new Error('CSRF token not found');
-    }
-    
-    console.log('Using CSRF token:', csrfToken);
-    
-    // Define itemsData at a higher scope so it's accessible throughout the function
-    let itemsData = {
-      totalQty: 'N/A',
-      hasItems: false,
-      totalOrders: 0 // Add total orders to the data
-    };
-    
-    // First, check if we have items to post
-    console.log('Checking if order has items...');
-    
-    try {
-      const itemsResponse = await fetch(`/check-order-has-items/${journalIdString}`);
-      console.log('Items check response status:', itemsResponse.status);
-      
-      // Log the raw response for debugging
-      const itemsResponseText = await itemsResponse.text();
-      console.log('Raw items check response:', itemsResponseText);
-      
-      // Try to parse as JSON
-      try {
-        itemsData = JSON.parse(itemsResponseText);
-        console.log('Parsed items data:', itemsData);
-      } catch (parseError) {
-        console.error('Error parsing items response as JSON:', parseError);
-        throw new Error('Server returned invalid JSON when checking items');
-      }
-      
-      if (!itemsData.hasItems) {
-        Swal.fire({
-          title: 'No Items Found',
-          text: 'No items with non-zero counts found in this order.',
-          icon: 'warning',
-          confirmButtonText: 'OK'
-        });
-        return;
-      }
-      
-    } catch (itemsError) {
-      console.error('Error checking if order has items:', itemsError);
+    // Check if this specific journal is already being processed
+    if (window[processingKey]) {
+      console.log(`Journal ${journalIdString} is already being processed, preventing duplicate submission`);
       Swal.fire({
-        title: 'Error',
-        text: 'Failed to check if order has items: ' + itemsError.message,
-        icon: 'error',
+        title: 'Processing in Progress',
+        text: 'This order is already being processed. Please wait.',
+        icon: 'info',
         confirmButtonText: 'OK'
       });
       return;
     }
     
-    // Get total quantity
-    const totalQty = itemsData.totalQty || orderRecord?.qty || 'N/A';
-    const totalOrders = itemsData.totalOrders || 0;
-    
-    // Confirm with user before proceeding
-    const confirmResult = await Swal.fire({
-      title: 'Confirm Order Posting',
-      html: `Are you sure you want to post this order?<br><br>` +
-            `<b style="color: red;">Total Quantity: ${totalQty}</b><br>` +
-            `<b style="color: red;">Total Orders: ${totalOrders}</b><br>` +
-            `<b style="color: red;">Date: ${orderDate}</b>`,
-      icon: 'question',
-      showCancelButton: true,
-      confirmButtonText: 'Yes, Post Order',
-      cancelButtonText: 'Cancel'
-    });
-
-    if (!confirmResult.isConfirmed) {
-      console.log('User cancelled order posting');
-      return;
-    }
-
-    // CRITICAL FIX: Add a client-side flag to prevent duplicate submissions
-    // Check if this button was already clicked
-    if (window.isPostingOrder) {
-      console.log('Order posting already in progress, preventing duplicate submission');
-      return;
-    }
-    
-    // Set the flag to prevent duplicate clicks
-    window.isPostingOrder = true;
+    // Set the processing flag for this specific journal
+    window[processingKey] = true;
     
     try {
+      // Find the order in the props data to get its date
+      const orderRecord = props.inventjournaltables.find(order => order.journalid === journalId);
+      const orderDate = orderRecord?.createddatetime ? new Date(orderRecord.createddatetime).toLocaleDateString() : new Date().toLocaleDateString();
+      
+      // Show loading SweetAlert
+      Swal.fire({
+        title: 'Processing Order',
+        text: 'Please wait while your order is being processed...',
+        icon: 'info',
+        allowOutsideClick: false,
+        showConfirmButton: false,
+        didOpen: () => {
+          Swal.showLoading();
+        }
+      });
+      
+      // Get CSRF token from meta tag
+      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+      if (!csrfToken) {
+        console.error('CSRF token not found in page');
+        throw new Error('CSRF token not found');
+      }
+      
+      console.log('Using CSRF token:', csrfToken);
+      
+      // Define itemsData at a higher scope so it's accessible throughout the function
+      let itemsData = {
+        totalQty: 'N/A',
+        hasItems: false,
+        totalOrders: 0
+      };
+      
+      // First, check if we have items to post
+      console.log('Checking if order has items...');
+      
+      try {
+        const itemsResponse = await fetch(`/check-order-has-items/${journalIdString}`);
+        console.log('Items check response status:', itemsResponse.status);
+        
+        // Log the raw response for debugging
+        const itemsResponseText = await itemsResponse.text();
+        console.log('Raw items check response:', itemsResponseText);
+        
+        // Try to parse as JSON
+        try {
+          itemsData = JSON.parse(itemsResponseText);
+          console.log('Parsed items data:', itemsData);
+        } catch (parseError) {
+          console.error('Error parsing items response as JSON:', parseError);
+          throw new Error('Server returned invalid JSON when checking items');
+        }
+        
+        if (!itemsData.hasItems) {
+          Swal.fire({
+            title: 'No Items Found',
+            text: 'No items with non-zero counts found in this order.',
+            icon: 'warning',
+            confirmButtonText: 'OK'
+          });
+          return;
+        }
+        
+      } catch (itemsError) {
+        console.error('Error checking if order has items:', itemsError);
+        Swal.fire({
+          title: 'Error',
+          text: 'Failed to check if order has items: ' + itemsError.message,
+          icon: 'error',
+          confirmButtonText: 'OK'
+        });
+        return;
+      }
+      
+      // Get total quantity
+      const totalQty = itemsData.totalQty || orderRecord?.qty || 'N/A';
+      const totalOrders = itemsData.totalOrders || 0;
+      
+      // Confirm with user before proceeding
+      const confirmResult = await Swal.fire({
+        title: 'Confirm Order Posting',
+        html: `Are you sure you want to post this order?<br><br>` +
+              `<b style="color: red;">Total Quantity: ${totalQty}</b><br>` +
+              `<b style="color: red;">Total Orders: ${totalOrders}</b><br>` +
+              `<b style="color: red;">Date: ${orderDate}</b>`,
+        icon: 'question',
+        showCancelButton: true,
+        confirmButtonText: 'Yes, Post Order',
+        cancelButtonText: 'Cancel'
+      });
+
+      if (!confirmResult.isConfirmed) {
+        console.log('User cancelled order posting');
+        return;
+      }
+
       // Generate and download text files first
       console.log('Generating text files...');
       const filesGenerated = await generateAndDownloadTextFile(journalIdString);
@@ -354,19 +362,26 @@ const postAndSend = async (journalId) => {
           icon: 'warning',
           confirmButtonText: 'OK'
         });
-        window.isPostingOrder = false; // Reset the flag
         return;
       }
       
-      // Now post the order
+      // Now post the order with additional safeguards
       console.log('Posting order...');
+      
+      // CRITICAL FIX: Add timestamp and unique identifier to prevent duplicate requests
+      const requestId = `${journalIdString}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      
       const postResponse = await fetch('/post-order', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrfToken
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Request-ID': requestId // Add unique request identifier
         },
-        body: JSON.stringify({ journalid: journalIdString })
+        body: JSON.stringify({ 
+          journalid: journalIdString,
+          requestId: requestId // Include request ID in body as well
+        })
       });
       
       console.log('Post response status:', postResponse.status);
@@ -426,10 +441,12 @@ const postAndSend = async (journalId) => {
           location.reload();
         }
       });
+      
     } finally {
-      // Always reset the posting flag, even if there's an error
-      window.isPostingOrder = false;
+      // Always reset the processing flag for this specific journal, even if there's an error
+      delete window[processingKey];
     }
+    
   } catch (error) {
     console.error('Error in postAndSend:', error);
     Swal.fire({
@@ -438,8 +455,10 @@ const postAndSend = async (journalId) => {
       icon: 'error',
       confirmButtonText: 'OK'
     });
+    
     // Make sure to reset the flag even in case of errors
-    window.isPostingOrder = false;
+    const processingKey = `posting_${String(journalId)}`;
+    delete window[processingKey];
   }
 };
 

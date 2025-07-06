@@ -1053,162 +1053,117 @@ public function postOrder(Request $request)
         $now = Carbon::now('Asia/Manila');
         $currentDateTime = $now->toDateString();
         
-        // CRITICAL FIX: Use a database-level lock to prevent concurrent processing
+        // CRITICAL FIX: Lock the journal record to prevent concurrent processing
         DB::beginTransaction();
         
-        try {
-            // First, check if the journal has already been posted using FOR UPDATE lock
-            $journal = DB::table('inventjournaltables')
-                ->where('journalid', $journalId)
-                ->where('storeid', $storeName)
-                ->lockForUpdate() // This prevents other processes from modifying this record
-                ->first();
+        // First, check if the journal has already been posted to prevent duplicates
+        $journal = DB::table('inventjournaltables')
+            ->where('journalid', $journalId)
+            ->where('storeid', $storeName)
+            ->lockForUpdate() // Lock this row to prevent concurrent operations
+            ->first();
 
-            if (!$journal) {
-                \Log::warning("Journal not found: {$journalId}");
-                DB::rollBack();
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Order not found.'
-                ], 404);
-            }
-            
-            // If already posted, return success but inform the client
-            if ($journal->posted == 1) {
-                \Log::info("Journal {$journalId} is already posted, returning early");
-                DB::rollBack();
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Order has already been posted.',
-                    'already_posted' => true
-                ]);
-            }
-            
-            // Get the items to be posted - only those with positive counts
-            $items = DB::table('inventjournaltransrepos')
-                ->where('journalid', $journalId)
-                ->where('storename', $storeName)
-                ->where('counted', '>', 0)
-                ->get();
-                
-            \Log::info("Found {$items->count()} items with non-zero counts for journal {$journalId}");
-            
-            if ($items->isEmpty()) {
-                \Log::warning("No items with positive counts found for journal {$journalId}");
-                DB::rollBack();
-                return response()->json([
-                    'success' => false,
-                    'message' => 'No items with positive counts found in this order.'
-                ], 400);
-            }
-
-            // CRITICAL FIX: Check if any items already exist in inventjournaltrans for this journal
-            $existingItems = DB::table('inventjournaltrans')
-                ->where('JOURNALID', $journalId)
-                ->count();
-                
-            if ($existingItems > 0) {
-                \Log::warning("Items already exist in inventjournaltrans for journal {$journalId}, count: {$existingItems}");
-                DB::rollBack();
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Order has already been processed.',
-                    'already_posted' => true
-                ]);
-            }
-
-            // Update the journal table first to mark as posted (this prevents other concurrent requests)
-            $journalUpdateCount = DB::table('inventjournaltables')
-                ->where('journalid', $journalId)
-                ->where('storeid', $storeName)
-                ->where('posted', 0) // Only update if not already posted
-                ->update([
-                    'posted' => 1,
-                    'sent' => 1,
-                ]);
-            
-            if ($journalUpdateCount === 0) {
-                \Log::warning("Journal {$journalId} was already posted by another process");
-                DB::rollBack();
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Order has already been posted by another process.',
-                    'already_posted' => true
-                ]);
-            }
-            
-            \Log::info("Updated journal table for journal {$journalId}, affected rows: {$journalUpdateCount}");
-
-            // Update the status to 1 in the repos table
-            $reposUpdateCount = DB::table('inventjournaltransrepos')
-                ->where('journalid', $journalId)
-                ->where('storename', $storeName)
-                ->update([
-                    'status' => 1
-                ]);
-                
-            \Log::info("Updated repos status for journal {$journalId}, affected rows: {$reposUpdateCount}");
-
-            // Insert data to inventjournaltrans table - using INSERT IGNORE to prevent duplicates
-            $insertedRows = 0;
-            foreach ($items as $item) {
-                $inserted = DB::table('inventjournaltrans')->insertOrIgnore([
-                    'JOURNALID' => $journalId,
-                    'TRANSDATE' => $currentDateTime,
-                    'ITEMID' => $item->itemid,
-                    'ITEMDEPARTMENT' => $item->itemdepartment,
-                    'ADJUSTMENT' => $item->counted,
-                    'COSTPRICE' => 0.00,
-                    'PRICEUNIT' => 0.00,
-                    'SALESAMOUNT' => 0.00,
-                    'INVENTONHAND' => 0,
-                    'COUNTED' => $item->counted,
-                    'REASONREFRECID' => '00001',
-                    'VARIANTID' => 0,
-                    'POSTED' => 1,
-                    'UNITID' => 'PCS',
-                    'updated_at' => now(),
-                    'created_at' => now()
-                ]);
-                
-                if ($inserted) {
-                    $insertedRows++;
-                }
-            }
-            
-            \Log::info("Inserted {$insertedRows} items for journal {$journalId}");
-
-            // Double-check that we didn't create duplicates
-            $finalItemCount = DB::table('inventjournaltrans')
-                ->where('JOURNALID', $journalId)
-                ->count();
-                
-            if ($finalItemCount > $items->count()) {
-                \Log::error("Duplicate items detected! Expected: {$items->count()}, Found: {$finalItemCount}");
-                // If duplicates detected, rollback and return error
-                DB::rollBack();
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Duplicate items detected during posting. Please try again.'
-                ], 500);
-            }
-
-            DB::commit();
-            \Log::info("Successfully posted journal {$journalId} with {$insertedRows} items");
-            
-            return response()->json([
-                'success' => true,
-                'message' => 'Order has been successfully posted and sent',
-                'insertedRows' => $insertedRows,
-                'journalUpdateCount' => $journalUpdateCount
-            ]);
-            
-        } catch (\Exception $e) {
+        if (!$journal) {
+            \Log::warning("Journal not found: {$journalId}");
             DB::rollBack();
-            throw $e; // Re-throw to be caught by outer catch block
+            return response()->json([
+                'success' => false,
+                'message' => 'Order not found.'
+            ], 404);
         }
         
+        // If already posted, return success but inform the client
+        if ($journal->posted == 1) {
+            \Log::info("Journal {$journalId} is already posted, returning early");
+            DB::rollBack();
+            return response()->json([
+                'success' => true,
+                'message' => 'Order has already been posted.',
+                'already_posted' => true
+            ]);
+        }
+        
+        // Get the items to be posted - only those with positive counts
+        $items = DB::table('inventjournaltransrepos')
+            ->where('journalid', $journalId)
+            ->where('storename', $storeName)
+            ->where('counted', '>', 0)
+            ->get();
+            
+        \Log::info("Found {$items->count()} items with non-zero counts for journal {$journalId}");
+        
+        if ($items->isEmpty()) {
+            \Log::warning("No items with positive counts found for journal {$journalId}");
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'No items with positive counts found in this order.'
+            ], 400);
+        }
+
+        // Update the status to 1 in the repos table
+        $reposUpdateCount = DB::table('inventjournaltransrepos')
+            ->where('journalid', $journalId)
+            ->where('storename', $storeName)
+            ->update([
+                'status' => 1
+            ]);
+            
+        \Log::info("Updated repos status for journal {$journalId}, affected rows: {$reposUpdateCount}");
+
+        // CRITICAL FIX: Delete any existing entries for this journal in inventjournaltrans before inserting
+        // This ensures we don't duplicate entries even if this operation has been attempted before
+        $deleteCount = DB::table('inventjournaltrans')
+            ->where('JOURNALID', $journalId)
+            ->delete();
+            
+        \Log::info("Deleted {$deleteCount} existing entries for journal {$journalId} to prevent duplicates");
+
+        // Copy data from inventjournaltransrepos to inventjournaltrans only for items with counted > 0
+        $insertQuery = "
+            INSERT INTO inventjournaltrans 
+            (JOURNALID, TRANSDATE, ITEMID, ITEMDEPARTMENT, ADJUSTMENT, COSTPRICE, PRICEUNIT, 
+             SALESAMOUNT, INVENTONHAND, COUNTED, REASONREFRECID, VARIANTID, POSTED, 
+             UNITID, updated_at)
+            SELECT ?, ?, itemid, itemdepartment, counted, 0.00, 0.00, 
+                   0.00, 0, counted, '00001', 0, 1, 'PCS', NOW()
+            FROM inventjournaltransrepos
+            WHERE storename = ? AND journalid = ? AND counted > 0
+        ";
+        
+        \Log::info("Executing insert query for journal {$journalId}");
+        
+        $affectedRows = DB::insert($insertQuery, [
+            $journalId,           // 1st parameter: JOURNALID
+            $currentDateTime,     // 2nd parameter: TRANSDATE
+            $storeName,           // 3rd parameter: storename in WHERE clause
+            $journalId            // 4th parameter: journalid in WHERE clause
+        ]);
+        
+        \Log::info("Insert query executed for journal {$journalId}, affected rows: " . ($affectedRows ? 'true' : 'false'));
+
+        // Mark only the specific journal as posted
+        $journalUpdateCount = DB::table('inventjournaltables')
+            ->where('journalid', $journalId)
+            ->where('storeid', $storeName)
+            ->update([
+                'posted' => 1,
+                'sent' => 1,  // Also mark as sent
+            ]);
+        
+        \Log::info("Updated journal table for journal {$journalId}, affected rows: {$journalUpdateCount}");
+
+        DB::commit();
+        \Log::info("Successfully posted journal {$journalId}");
+        
+        return response()->json([
+            'success' => true,
+            'message' => 'Order has been successfully posted and sent',
+            'affectedRows' => $affectedRows,
+            'journalUpdateCount' => $journalUpdateCount
+        ]);
     } catch (\Exception $e) {
+        DB::rollBack();
         \Log::error("Error posting order: " . $e->getMessage(), [
             'exception' => get_class($e),
             'file' => $e->getFile(),
