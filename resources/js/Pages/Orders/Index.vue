@@ -254,6 +254,59 @@ const postAndSend = async (journalId) => {
     window[processingKey] = true;
     
     try {
+      // Get CSRF token from meta tag
+      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+      if (!csrfToken) {
+        console.error('CSRF token not found in page');
+        throw new Error('CSRF token not found');
+      }
+      
+      console.log('Using CSRF token:', csrfToken);
+      
+      // FIRST: Check if current time allows posting
+      console.log('Checking order time...');
+      const timeCheckResponse = await fetch('/check-order-time', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken
+        },
+        body: JSON.stringify({ 
+          journalid: journalIdString
+        })
+      });
+      
+      console.log('Time check response status:', timeCheckResponse.status);
+      
+      const timeCheckData = await timeCheckResponse.json();
+      console.log('Time check data:', timeCheckData);
+      
+      if (!timeCheckData.success) {
+        // Show cutoff time error with specific styling
+        Swal.fire({
+          title: 'Order Cutoff Time Exceeded',
+          html: `<div style="text-align: center;">
+                   <div style="font-size: 18px; color: #dc3545; margin-bottom: 15px;">
+                     <i class="fas fa-clock" style="margin-right: 8px;"></i>
+                     Orders cannot be posted after ${timeCheckData.cutoff_time || '4:00 PM'}
+                   </div>
+                   <div style="font-size: 14px; color: #6c757d; margin-bottom: 10px;">
+                     Current time: <strong>${timeCheckData.current_time || 'N/A'}</strong>
+                   </div>
+                   <div style="font-size: 14px; color: #6c757d;">
+                     Please try again tomorrow after 12:00 AM
+                   </div>
+                 </div>`,
+          icon: 'warning',
+          confirmButtonText: 'Understood',
+          confirmButtonColor: '#ffc107',
+          customClass: {
+            popup: 'cutoff-time-popup'
+          }
+        });
+        return;
+      }
+      
       // Find the order in the props data to get its date
       const orderRecord = props.inventjournaltables.find(order => order.journalid === journalId);
       const orderDate = orderRecord?.createddatetime ? new Date(orderRecord.createddatetime).toLocaleDateString() : new Date().toLocaleDateString();
@@ -270,15 +323,6 @@ const postAndSend = async (journalId) => {
         }
       });
       
-      // Get CSRF token from meta tag
-      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-      if (!csrfToken) {
-        console.error('CSRF token not found in page');
-        throw new Error('CSRF token not found');
-      }
-      
-      console.log('Using CSRF token:', csrfToken);
-      
       // Define itemsData at a higher scope so it's accessible throughout the function
       let itemsData = {
         totalQty: 'N/A',
@@ -286,7 +330,7 @@ const postAndSend = async (journalId) => {
         totalOrders: 0
       };
       
-      // First, check if we have items to post
+      // Check if we have items to post
       console.log('Checking if order has items...');
       
       try {
@@ -337,7 +381,8 @@ const postAndSend = async (journalId) => {
         html: `Are you sure you want to post this order?<br><br>` +
               `<b style="color: red;">Total Quantity: ${totalQty}</b><br>` +
               `<b style="color: red;">Total Orders: ${totalOrders}</b><br>` +
-              `<b style="color: red;">Date: ${orderDate}</b>`,
+              `<b style="color: red;">Date: ${orderDate}</b><br><br>` +
+              `<small style="color: #6c757d;">Current time: ${timeCheckData.current_time} (Cutoff: ${timeCheckData.cutoff_time})</small>`,
         icon: 'question',
         showCancelButton: true,
         confirmButtonText: 'Yes, Post Order',
@@ -407,6 +452,25 @@ const postAndSend = async (journalId) => {
       }
       
       if (!postResponse.ok) {
+        // Check if it's a cutoff time error
+        if (responseData.cutoff_exceeded) {
+          Swal.fire({
+            title: 'Order Cutoff Time Exceeded',
+            html: `<div style="text-align: center;">
+                     <div style="font-size: 18px; color: #dc3545; margin-bottom: 15px;">
+                       <i class="fas fa-clock" style="margin-right: 8px;"></i>
+                       ${responseData.message}
+                     </div>
+                     <div style="font-size: 14px; color: #6c757d;">
+                       Please try again tomorrow after 12:00 AM
+                     </div>
+                   </div>`,
+            icon: 'warning',
+            confirmButtonText: 'Understood',
+            confirmButtonColor: '#ffc107'
+          });
+          return;
+        }
         throw new Error(responseData.message || 'Error posting order');
       }
       
@@ -449,12 +513,32 @@ const postAndSend = async (journalId) => {
     
   } catch (error) {
     console.error('Error in postAndSend:', error);
-    Swal.fire({
-      title: 'Error',
-      text: 'Error posting and sending order: ' + error.message,
-      icon: 'error',
-      confirmButtonText: 'OK'
-    });
+    
+    // Check if it's a cutoff time related error
+    if (error.message.includes('cutoff') || error.message.includes('4:00') || error.message.includes('16:')) {
+      Swal.fire({
+        title: 'Order Cutoff Time Exceeded',
+        html: `<div style="text-align: center;">
+                 <div style="font-size: 18px; color: #dc3545; margin-bottom: 15px;">
+                   <i class="fas fa-clock" style="margin-right: 8px;"></i>
+                   ${error.message}
+                 </div>
+                 <div style="font-size: 14px; color: #6c757d;">
+                   Please try again tomorrow after 12:00 AM
+                 </div>
+               </div>`,
+        icon: 'warning',
+        confirmButtonText: 'Understood',
+        confirmButtonColor: '#ffc107'
+      });
+    } else {
+      Swal.fire({
+        title: 'Error',
+        text: 'Error posting and sending order: ' + error.message,
+        icon: 'error',
+        confirmButtonText: 'OK'
+      });
+    }
     
     // Make sure to reset the flag even in case of errors
     const processingKey = `posting_${String(journalId)}`;

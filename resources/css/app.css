@@ -164,6 +164,31 @@ table.dataTable thead > tr > th.dt-orderable-asc, table.dataTable thead > tr > t
     background-color: black;
 } */
 
+.cutoff-time-popup {
+  border-radius: 15px !important;
+  border: 3px solid #ffc107 !important;
+}
+
+.cutoff-time-popup .swal2-icon.swal2-warning {
+  border-color: #ffc107 !important;
+  color: #ffc107 !important;
+}
+
+.cutoff-time-popup .swal2-title {
+  color: #dc3545 !important;
+  font-weight: bold !important;
+}
+
+/* Animation for the clock icon */
+@keyframes clockTick {
+  0% { transform: rotate(0deg); }
+  50% { transform: rotate(10deg); }
+  100% { transform: rotate(0deg); }
+}
+
+.fas.fa-clock {
+  animation: clockTick 1s ease-in-out infinite;
+}
 
 
  

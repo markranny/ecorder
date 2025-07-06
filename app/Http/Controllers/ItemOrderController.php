@@ -541,131 +541,160 @@ class ItemOrderController extends Controller
     }
 
     public function getbwproducts(Request $request)
-    {
-        try {
-            $request->validate([
-                'JOURNALID' => 'required|string',  
-            ]);
+{
+    try {
+        $request->validate([
+            'JOURNALID' => 'required|string',  
+        ]);
 
-            $journalid = $request->JOURNALID;
+        $journalid = $request->JOURNALID;
 
-            $record = DB::table('inventjournaltransrepos')
-                ->select('JOURNALID')
-                ->where('journalid', $journalid)
-                ->count();
+        $record = DB::table('inventjournaltransrepos')
+            ->select('JOURNALID')
+            ->where('journalid', $journalid)
+            ->count();
 
-            $currentDateTime = DB::table('inventjournaltables')
-                ->where('journalid', $journalid)
-                ->value('POSTEDDATETIME');
+        $currentDateTime = DB::table('inventjournaltables')
+            ->where('journalid', $journalid)
+            ->value('POSTEDDATETIME');
+        
+        if ($record >= 1) {
+            return redirect()->route('ItemOrders', ['journalid' => $journalid])
+                ->with('message', 'You have already generated items!')
+                ->with('isError', true);
+        } else {
+            if ($request->EndDate != null) {
+                $storename = Auth::user()->storeid;
+
+                // Get the next available ID
+                $nextId = DB::table('inventjournaltransrepos')->max('id') + 1;
+
+                DB::insert(
+                    'INSERT INTO inventjournaltransrepos (id, JOURNALID, TRANSDATE, ITEMID, COUNTED, STORENAME)
+                    SELECT ? + ROW_NUMBER() OVER (ORDER BY itemid), ?, ?, itemid, counted, ?
+                    FROM inventjournaltrans
+                    WHERE DATE(POSTEDDATETIME) = ? AND STORENAME = ?',
+                    [$nextId - 1, $request->JOURNALID, $currentDateTime, $storename, $request->EndDate, $storename]
+                );
             
-            if ($record >= 1) {
-                return redirect()->route('ItemOrders', ['journalid' => $journalid])
-                    ->with('message', 'You have already generated items!')
-                    ->with('isError', true);
+                return redirect()->route('ItemOrders', ['journalid' => $request->JOURNALID])
+                    ->with('message', 'Generate Item Successfully')
+                    ->with('isSuccess', true);   
             } else {
-                if ($request->EndDate != null) {
-                    $storename = Auth::user()->storeid;
+                $storename = Auth::user()->storeid;
 
-                    DB::insert(
-                        'INSERT INTO inventjournaltransrepos (JOURNALID, TRANSDATE, ITEMID, COUNTED, STORENAME)
-                        SELECT ?, ?, itemid, counted, ?
-                        FROM inventjournaltrans
-                        WHERE DATE(POSTEDDATETIME) = ? AND STORENAME = ?',
-                        [$request->JOURNALID, $currentDateTime, $storename, $request->EndDate, $storename]
-                    );
-                
-                    return redirect()->route('ItemOrders', ['journalid' => $request->JOURNALID])
-                        ->with('message', 'Generate Item Successfully')
-                        ->with('isSuccess', true);   
-                } else {
-                    $storename = Auth::user()->storeid;
+                $getseven = DB::table('rbostoretables')
+                    ->where('name', 'like', '%PSC%')
+                    ->where('name', $storename)
+                    ->count();
 
-                    $getseven = DB::table('rbostoretables')
-                        ->where('name', 'like', '%PSC%')
-                        ->where('name', $storename)
-                        ->count();
+                $getgcp = DB::table('rbostoretables')
+                    ->where('name', 'like', '%GCP%')
+                    ->where('name', $storename)
+                    ->count();
 
-                    $getgcp = DB::table('rbostoretables')
-                        ->where('name', 'like', '%GCP%')
-                        ->where('name', $storename)
-                        ->count();
+                // Get the next available ID
+                $nextId = DB::table('inventjournaltransrepos')->max('id') + 1;
 
-                    if ($getseven >= 1) {
-                        DB::table('inventjournaltransrepos')
-                            ->insertUsing(
-                                ['JOURNALID', 'ITEMDEPARTMENT', 'TRANSDATE', 'ITEMID', 'COUNTED', 'STORENAME', 'MOQ', 'STATUS'],
-                                function ($query) use ($request, $currentDateTime, $storename) {
-                                    $query->select(
-                                            DB::raw("'{$request->JOURNALID}' as JOURNALID"),
-                                            'b.itemdepartment',
-                                            DB::raw("'{$currentDateTime}' as TRANSDATE"),
-                                            'a.itemid as ITEMID',
-                                            DB::raw('0 as COUNTED'),
-                                            DB::raw("'{$storename}' as STORENAME"),
-                                            DB::raw("CASE WHEN b.moq IS NULL THEN 0 ELSE b.moq END as MOQ"),
-                                            DB::raw('0 as STATUS')
-                                        )
-                                        ->from('inventtables as a')
-                                        ->leftJoin('rboinventtables as b', 'a.itemid', '=', 'b.itemid')
-                                        ->where('b.activeondelivery', '1')
-                                        ->where('a.itemid', 'like', '%SVN%');
-                                } 
-                            );
-                    }elseif ($getgcp >= 1){
-                        DB::table('inventjournaltransrepos')
-                        ->insertUsing(
-                            ['JOURNALID', 'ITEMDEPARTMENT', 'TRANSDATE', 'ITEMID', 'COUNTED', 'STORENAME', 'MOQ', 'STATUS'],
-                            function ($query) use ($request, $currentDateTime, $storename) {
-                                $query->select(
-                                        DB::raw("'{$request->JOURNALID}' as JOURNALID"),
-                                        'b.itemdepartment',
-                                        DB::raw("'{$currentDateTime}' as TRANSDATE"),
-                                        'a.itemid as ITEMID',
-                                        DB::raw('0 as COUNTED'),
-                                        DB::raw("'{$storename}' as STORENAME"),
-                                        DB::raw("CASE WHEN b.moq IS NULL THEN 0 ELSE b.moq END as MOQ"),
-                                        DB::raw('0 as STATUS')
-                                    )
-                                    ->from('inventtables as a')
-                                    ->leftJoin('rboinventtables as b', 'a.itemid', '=', 'b.itemid')
-                                    ->where('b.activeondelivery', '1')
-                                    ->where('a.itemid', 'like', '%GCP%');
-                            } 
-                        );
-                    } else {
-                        DB::table('inventjournaltransrepos')
-                            ->insertUsing(
-                                ['JOURNALID', 'ITEMDEPARTMENT', 'TRANSDATE', 'ITEMID', 'COUNTED', 'STORENAME', 'MOQ', 'STATUS'],
-                                function ($query) use ($request, $currentDateTime, $storename) {
-                                    $query->select(
-                                            DB::raw("'{$request->JOURNALID}' as JOURNALID"),
-                                            'b.itemdepartment',
-                                            DB::raw("'{$currentDateTime}' as TRANSDATE"),
-                                            'a.itemid as ITEMID',
-                                            DB::raw('0 as COUNTED'),
-                                            DB::raw("'{$storename}' as STORENAME"),
-                                            DB::raw("CASE WHEN b.moq IS NULL THEN 0 ELSE b.moq END as MOQ"),
-                                            DB::raw('0 as STATUS')
-                                        )
-                                        ->from('inventtables as a')
-                                        ->leftJoin('rboinventtables as b', 'a.itemid', '=', 'b.itemid')
-                                        ->where('b.activeondelivery', '1');
-                                } 
-                            );
+                if ($getseven >= 1) {
+                    // For PSC stores - filter by SVN items
+                    $insertData = DB::table('inventtables as a')
+                        ->leftJoin('rboinventtables as b', 'a.itemid', '=', 'b.itemid')
+                        ->where('b.activeondelivery', '1')
+                        ->where('a.itemid', 'like', '%SVN%')
+                        ->select('a.itemid', 'b.itemdepartment', 'b.moq')
+                        ->get();
+
+                    // Insert each record individually with explicit ID
+                    foreach ($insertData as $index => $item) {
+                        DB::table('inventjournaltransrepos')->insert([
+                            'id' => $nextId + $index,
+                            'JOURNALID' => $request->JOURNALID,
+                            'ITEMDEPARTMENT' => $item->itemdepartment,
+                            'TRANSDATE' => $currentDateTime,
+                            'ITEMID' => $item->itemid,
+                            'COUNTED' => 0,
+                            'STORENAME' => $storename,
+                            'MOQ' => $item->moq ?? 0,
+                            'STATUS' => 0,
+                            'created_at' => now(),
+                            'updated_at' => now()
+                        ]);
                     }
-            
-                    return redirect()->route('ItemOrders', ['journalid' => $journalid])
-                        ->with('message', 'Generate Item Successfully')
-                        ->with('isSuccess', true);
+
+                } elseif ($getgcp >= 1) {
+                    // For GCP stores - filter by GCP items
+                    $insertData = DB::table('inventtables as a')
+                        ->leftJoin('rboinventtables as b', 'a.itemid', '=', 'b.itemid')
+                        ->where('b.activeondelivery', '1')
+                        ->where('a.itemid', 'like', '%GCP%')
+                        ->select('a.itemid', 'b.itemdepartment', 'b.moq')
+                        ->get();
+
+                    // Insert each record individually with explicit ID
+                    foreach ($insertData as $index => $item) {
+                        DB::table('inventjournaltransrepos')->insert([
+                            'id' => $nextId + $index,
+                            'JOURNALID' => $request->JOURNALID,
+                            'ITEMDEPARTMENT' => $item->itemdepartment,
+                            'TRANSDATE' => $currentDateTime,
+                            'ITEMID' => $item->itemid,
+                            'COUNTED' => 0,
+                            'STORENAME' => $storename,
+                            'MOQ' => $item->moq ?? 0,
+                            'STATUS' => 0,
+                            'created_at' => now(),
+                            'updated_at' => now()
+                        ]);
+                    }
+
+                } else {
+                    // For regular stores - all active items
+                    $insertData = DB::table('inventtables as a')
+                        ->leftJoin('rboinventtables as b', 'a.itemid', '=', 'b.itemid')
+                        ->where('b.activeondelivery', '1')
+                        ->select('a.itemid', 'b.itemdepartment', 'b.moq')
+                        ->get();
+
+                    // Insert each record individually with explicit ID
+                    foreach ($insertData as $index => $item) {
+                        DB::table('inventjournaltransrepos')->insert([
+                            'id' => $nextId + $index,
+                            'JOURNALID' => $request->JOURNALID,
+                            'ITEMDEPARTMENT' => $item->itemdepartment,
+                            'TRANSDATE' => $currentDateTime,
+                            'ITEMID' => $item->itemid,
+                            'COUNTED' => 0,
+                            'STORENAME' => $storename,
+                            'MOQ' => $item->moq ?? 0,
+                            'STATUS' => 0,
+                            'created_at' => now(),
+                            'updated_at' => now()
+                        ]);
+                    }
                 }
+        
+                return redirect()->route('ItemOrders', ['journalid' => $journalid])
+                    ->with('message', 'Generate Item Successfully')
+                    ->with('isSuccess', true);
             }
-        } catch (ValidationException $e) {
-            return back()->withErrors($e->errors())
-                ->withInput()
-                ->with('message', $e->errors())
-                ->with('isSuccess', false);
         }
+    } catch (ValidationException $e) {
+        return back()->withErrors($e->errors())
+            ->withInput()
+            ->with('message', $e->errors())
+            ->with('isSuccess', false);
+    } catch (\Exception $e) {
+        \Log::error('Error in getbwproducts: ' . $e->getMessage(), [
+            'trace' => $e->getTraceAsString(),
+            'journalid' => $request->JOURNALID ?? 'N/A'
+        ]);
+        
+        return back()
+            ->with('message', 'Error generating items: ' . $e->getMessage())
+            ->with('isError', true);
     }
+}
 
     public function destroy(string $id, Request $request)
     {
@@ -1049,6 +1078,20 @@ public function postOrder(Request $request)
         
         \Log::info("Processing order posting for journal {$journalId}, store {$storeName}");
         
+        // FIRST: Check if current time allows posting
+        $timeCheckRequest = new Request(['journalid' => $journalId]);
+        $timeCheckResponse = $this->checkOrderTime($timeCheckRequest);
+        $timeCheckData = json_decode($timeCheckResponse->getContent(), true);
+        
+        if (!$timeCheckData['success']) {
+            \Log::warning("Time check failed for journal {$journalId}: " . $timeCheckData['message']);
+            return response()->json([
+                'success' => false,
+                'message' => $timeCheckData['message'],
+                'cutoff_exceeded' => $timeCheckData['cutoff_exceeded'] ?? false
+            ], 400);
+        }
+        
         // Current date for database operations
         $now = Carbon::now('Asia/Manila');
         $currentDateTime = $now->toDateString();
@@ -1057,12 +1100,18 @@ public function postOrder(Request $request)
         DB::beginTransaction();
         
         try {
-            // First, check if the journal has already been posted using FOR UPDATE lock
+            // FIXED: Explicitly select the columns we need, including 'posted'
             $journal = DB::table('inventjournaltables')
+                ->select(['journalid', 'storeid', 'posted', 'sent', 'description']) // Explicitly select needed columns
                 ->where('journalid', $journalId)
                 ->where('storeid', $storeName)
                 ->lockForUpdate() // This prevents other processes from modifying this record
                 ->first();
+
+            \Log::info("Journal query result", [
+                'journal_found' => $journal ? 'Yes' : 'No',
+                'journal_data' => $journal ? (array)$journal : null
+            ]);
 
             if (!$journal) {
                 \Log::warning("Journal not found: {$journalId}");
@@ -1073,8 +1122,17 @@ public function postOrder(Request $request)
                 ], 404);
             }
             
+            // FIXED: Check if posted property exists and has a value
+            $isPosted = isset($journal->posted) ? (int)$journal->posted : 0;
+            
+            \Log::info("Journal posting status", [
+                'posted_property_exists' => isset($journal->posted),
+                'posted_value' => $journal->posted ?? 'NULL',
+                'is_posted' => $isPosted
+            ]);
+            
             // If already posted, return success but inform the client
-            if ($journal->posted == 1) {
+            if ($isPosted == 1) {
                 \Log::info("Journal {$journalId} is already posted, returning early");
                 DB::rollBack();
                 return response()->json([
@@ -1084,14 +1142,27 @@ public function postOrder(Request $request)
                 ]);
             }
             
-            // Get the items to be posted - only those with positive counts
+            // FIXED: Get the items with proper column selection and aliases
             $items = DB::table('inventjournaltransrepos')
+                ->select([
+                    'ITEMID as itemid',
+                    'COUNTED as counted', 
+                    'ITEMDEPARTMENT as itemdepartment',
+                    'STORENAME as storename'
+                ])
                 ->where('journalid', $journalId)
                 ->where('storename', $storeName)
                 ->where('counted', '>', 0)
                 ->get();
                 
             \Log::info("Found {$items->count()} items with non-zero counts for journal {$journalId}");
+            
+            // Debug: Log the first item to see its structure
+            if ($items->count() > 0) {
+                \Log::info("First item structure", [
+                    'item_data' => (array)$items->first()
+                ]);
+            }
             
             if ($items->isEmpty()) {
                 \Log::warning("No items with positive counts found for journal {$journalId}");
@@ -1121,7 +1192,10 @@ public function postOrder(Request $request)
             $journalUpdateCount = DB::table('inventjournaltables')
                 ->where('journalid', $journalId)
                 ->where('storeid', $storeName)
-                ->where('posted', 0) // Only update if not already posted
+                ->where(function($query) {
+                    $query->where('posted', 0)
+                          ->orWhereNull('posted'); // Handle NULL values
+                })
                 ->update([
                     'posted' => 1,
                     'sent' => 1,
@@ -1149,30 +1223,35 @@ public function postOrder(Request $request)
                 
             \Log::info("Updated repos status for journal {$journalId}, affected rows: {$reposUpdateCount}");
 
-            // Insert data to inventjournaltrans table - using INSERT IGNORE to prevent duplicates
+            // FIXED: Insert data to inventjournaltrans table with proper property access
             $insertedRows = 0;
             foreach ($items as $item) {
-                $inserted = DB::table('inventjournaltrans')->insertOrIgnore([
-                    'JOURNALID' => $journalId,
-                    'TRANSDATE' => $currentDateTime,
-                    'ITEMID' => $item->itemid,
-                    'ITEMDEPARTMENT' => $item->itemdepartment,
-                    'ADJUSTMENT' => $item->counted,
-                    'COSTPRICE' => 0.00,
-                    'PRICEUNIT' => 0.00,
-                    'SALESAMOUNT' => 0.00,
-                    'INVENTONHAND' => 0,
-                    'COUNTED' => $item->counted,
-                    'REASONREFRECID' => '00001',
-                    'VARIANTID' => 0,
-                    'POSTED' => 1,
-                    'UNITID' => 'PCS',
-                    'updated_at' => now(),
-                    'created_at' => now()
-                ]);
-                
-                if ($inserted) {
-                    $insertedRows++;
+                try {
+                    $inserted = DB::table('inventjournaltrans')->insertOrIgnore([
+                        'JOURNALID' => $journalId,
+                        'TRANSDATE' => $currentDateTime,
+                        'ITEMID' => $item->itemid, // Now using lowercase alias
+                        'ITEMDEPARTMENT' => $item->itemdepartment ?? 'REGULAR PRODUCT',
+                        'ADJUSTMENT' => $item->counted,
+                        'COSTPRICE' => 0.00,
+                        'PRICEUNIT' => 0.00,
+                        'SALESAMOUNT' => 0.00,
+                        'INVENTONHAND' => 0,
+                        'COUNTED' => $item->counted,
+                        'REASONREFRECID' => '00001',
+                        'VARIANTID' => 0,
+                        'POSTED' => 1,
+                        'UNITID' => 'PCS',
+                        'updated_at' => now(),
+                        'created_at' => now()
+                    ]);
+                    
+                    if ($inserted) {
+                        $insertedRows++;
+                    }
+                } catch (\Exception $insertError) {
+                    \Log::error("Error inserting item {$item->itemid}: " . $insertError->getMessage());
+                    throw $insertError;
                 }
             }
             
@@ -1249,8 +1328,8 @@ public function postOrder(Request $request)
         $currentHour = (int)$now->format('H');
         $currentMinute = (int)$now->format('i');
         
-        // Parse the store's cutoff time
-        $cutoffTime = '04:01'; // Default
+        // Parse the store's cutoff time - default to 16:00 (4:00 PM)
+        $cutoffTime = '16:00'; // Default cutoff time
         if ($store->CUTOFFTIME) {
             if (strlen($store->CUTOFFTIME) > 8) {
                 $cutoffTime = Carbon::parse($store->CUTOFFTIME)->format('H:i');
@@ -1267,19 +1346,23 @@ public function postOrder(Request $request)
         $currentTotalMinutes = $currentHour * 60 + $currentMinute;
         $cutoffTotalMinutes = $cutoffHour * 60 + $cutoffMinute;
         
-        // Checking if current time is after cutoff time (4:01 AM)
-        // and before midnight (0:00)
-        if ($currentTotalMinutes >= $cutoffTotalMinutes && $currentHour < 24) {
+        // Check if current time is after cutoff time (4:00 PM by default)
+        if ($currentTotalMinutes >= $cutoffTotalMinutes) {
             return response()->json([
                 'success' => false,
-                'message' => "Orders cannot be posted after the cutoff time ({$cutoffTime}). Please try again tomorrow."
+                'message' => "Orders cannot be posted after the cutoff time ({$cutoffTime}). Please try again tomorrow after 12:00 AM.",
+                'cutoff_exceeded' => true,
+                'current_time' => $now->format('H:i'),
+                'cutoff_time' => $cutoffTime
             ], 400);
         }
         
         // If we're here, posting is allowed
         return response()->json([
             'success' => true,
-            'message' => 'Order can be posted'
+            'message' => 'Order can be posted',
+            'current_time' => $now->format('H:i'),
+            'cutoff_time' => $cutoffTime
         ]);
         
     } catch (\Exception $e) {
